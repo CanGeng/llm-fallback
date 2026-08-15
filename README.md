@@ -9,8 +9,10 @@ current level is exhausted.
 
 ## Behavior
 
-- `agent/request` picks the pool level for each step (always level 0 for a new
-  step, so a recovered primary is reused immediately).
+- `agent/request` picks the pool level for each step. A new step starts at the
+  primary (level 0) **unless the explicitly requested provider is itself a pool
+  member** — then it starts there and fails over forward. A recovered primary is
+  therefore reused immediately on the next step.
 - `agent/request-error` records each level's failure, then advances the level by
   returning `{ kind: 'retry' }`. When every level is exhausted it throws one
   aggregated error listing each level's failure (`provider: code — message`).
@@ -44,7 +46,7 @@ config:
   alwaysMaxRetries: 2
   pools:
     - model: deepseek-v4-pro
-      providers: [ark-agent, ark-coding]
+      providers: [deepseek-official, ark-coding, ark-agent]
 ```
 
 ## Install

@@ -71,8 +71,10 @@ export function apply(ctx, config) {
     const stepKey = keyOf(payload.turn, payload.step)
     let s = state.get(payload.agent)
     if (!s || s.stepKey !== stepKey) {
-      // New step: start over at the primary level.
-      s = { stepKey, model: proposal.model, providers, cursor: 0, retries: 0, failures: [], warned: new Set() }
+      // New step: honor an explicit provider that is a pool member — start there
+      // and fail over forward; anything else starts at the primary (index 0).
+      const explicitIdx = providers.indexOf(proposal.provider)
+      s = { stepKey, model: proposal.model, providers, cursor: explicitIdx >= 0 ? explicitIdx : 0, retries: 0, failures: [], warned: new Set() }
       state.set(payload.agent, s)
     }
     const provider = s.providers[s.cursor]

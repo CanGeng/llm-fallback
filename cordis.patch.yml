@@ -1,5 +1,7 @@
 # llm-fallback profile layer: insert one row that mounts the fallback plugin.
-# The first provider of each pool is the primary; later ones are fallbacks.
+# The first provider of each pool is the primary; later ones are fallbacks,
+# tried in order. An explicit provider that is a pool member starts there and
+# fails over forward from it.
 - insert:
     - id: llm-fallback
       name: 'llm-fallback'
@@ -9,17 +11,21 @@
         pools:
           - model: deepseek-v4-pro
             providers:
-              - ark-agent
+              - deepseek-official
               - ark-coding
+              - ark-agent
           - model: deepseek-v4-flash
             providers:
-              - ark-agent
+              - deepseek-official
               - ark-coding
+              - ark-agent
+          # deepseek-official does not serve the GLM models, so they start at
+          # ark-coding and fall back to ark-agent only.
           - model: glm-5.3
             providers:
-              - ark-agent
               - ark-coding
+              - ark-agent
           - model: glm-5.2
             providers:
-              - ark-agent
               - ark-coding
+              - ark-agent
