@@ -30,8 +30,10 @@ retry budget fail over.
 `always` retries one provider forever and cannot be stopped from a listener, so
 it conflicts with a terminating fallback chain:
 
-- `alwaysPolicy: reject` (default) — refuse to load when a pool provider uses
-  `always`, naming the provider and model.
+- `alwaysPolicy: reject` (default) — refuse the provider, naming it and the
+  model. Providers registered at load time are rejected when the plugin loads;
+  routes activated later through settings (dormant routes) are rejected the
+  first time a pool request would use them.
 - `alwaysPolicy: degrade` — warn and cap that provider at `alwaysMaxRetries`
   same-provider retries before failing over.
 
@@ -41,7 +43,9 @@ In both modes, an `always` provider may never be the **last** level of a pool
 ## Configuration
 
 See `cordis.patch.yml`. The `pools` list maps a model id to its ordered
-provider chain:
+provider chain. The config is validated when the plugin loads: an unknown
+`alwaysPolicy`, a pool without a non-empty `model`, or a pool whose `providers`
+is not an array throws immediately instead of failing silently later.
 
 ```yaml
 config:
@@ -50,6 +54,12 @@ config:
   pools:
     - model: deepseek-v4-pro
       providers: [deepseek-official, ark-coding, ark-agent]
+```
+
+## Development
+
+```sh
+node --test   # or: npm test
 ```
 
 ## Install

@@ -28,7 +28,21 @@ export const inject = ['llm']
 export function apply(ctx, config) {
   const alwaysPolicy = config?.alwaysPolicy ?? 'reject' // 'reject' | 'degrade'
   const alwaysMaxRetries = config?.alwaysMaxRetries ?? 2
-  const pools = (config?.pools ?? []).map((p) => ({ model: p.model, providers: [...(p.providers ?? [])] }))
+  if (alwaysPolicy !== 'reject' && alwaysPolicy !== 'degrade') {
+    throw new Error(`llm-fallback: invalid alwaysPolicy "${alwaysPolicy}" — expected "reject" or "degrade"`)
+  }
+  const pools = (config?.pools ?? []).map((p) => {
+    // Fail loud on malformed pools: a missing model would register under
+    // `undefined`, and a non-array providers (e.g. a string) would spread into
+    // nonsense routes instead of being caught.
+    if (typeof p?.model !== 'string' || p.model.length === 0) {
+      throw new Error('llm-fallback: each pool needs a non-empty "model" string')
+    }
+    if (!Array.isArray(p.providers)) {
+      throw new Error(`llm-fallback: pool "${p.model}" needs a "providers" array`)
+    }
+    return { model: p.model, providers: [...p.providers] }
+  })
   const byModel = new Map(pools.map((p) => [p.model, p.providers]))
 
   // Load-time validation for providers that are already registered. Providers
@@ -88,6 +102,10 @@ export function apply(ctx, config) {
         await ctx.llm.resolveCallConfig({ ...proposal, provider: candidate }, payload.signal)
         break
       } catch (error) {
+        // A turn abort during the probe must surface as an abort, not be
+        // mistaken for a candidate failure (which would skip every provider
+        // and throw a misleading aggregated error).
+        if (payload.signal?.aborted) throw error
         const code = error?.code ?? 'UNKNOWN'
         const message = error?.message ?? ''
         ctx.logger.warn('llm-fallback: skipping provider "%s" (model "%s"): %s — %s', candidate, s.model, code, message)
@@ -103,17 +121,28 @@ export function apply(ctx, config) {
 
     const provider = s.providers[s.cursor]
 
-    // A pool's last level must be able to terminate: reject `always` there.
-    if (s.cursor === s.providers.length - 1) {
-      let policy
-      try {
-        policy = ctx.llm.providerRetryPolicy(provider)
-      } catch (error) {
-        if (error?.code !== 'NO_ADAPTER') throw error
-      }
-      if (policy?.mode === 'always') {
+    // Re-check the chosen provider's retry policy at runtime — routes activated
+    // after load (dormant pi-ai routes enabled through settings) were not seen
+    // by the load-time validation. An `always` provider may never be the last
+    // level (it can never terminate), and under alwaysPolicy: 'reject' it may
+    // not serve a pool at all. In 'degrade' mode it serves here and is capped
+    // in the agent/request-error listener.
+    let policy
+    try {
+      policy = ctx.llm.providerRetryPolicy(provider)
+    } catch (error) {
+      if (error?.code !== 'NO_ADAPTER') throw error
+    }
+    if (policy?.mode === 'always') {
+      if (s.cursor === s.providers.length - 1) {
         throw new Error(
           `llm-fallback: provider "${provider}" is the last fallback for model "${s.model}" with retryPolicy.mode=always; it can never terminate`,
+        )
+      }
+      if (alwaysPolicy === 'reject') {
+        throw new Error(
+          `llm-fallback: provider "${provider}" (model "${s.model}") uses retryPolicy.mode=always, ` +
+            'which is incompatible with fallback — set alwaysPolicy: "degrade" to allow it with a finite retry cap',
         )
       }
     }
