@@ -12,7 +12,10 @@ current level is exhausted.
 - `agent/request` picks the pool level for each step. A new step starts at the
   primary (level 0) **unless the explicitly requested provider is itself a pool
   member** — then it starts there and fails over forward. A recovered primary is
-  therefore reused immediately on the next step.
+  therefore reused immediately on the next step. It also probes each candidate
+  with `resolveCallConfig` and skips (recording) any that would fail before
+  streaming — a missing route (`NO_ADAPTER`), an unknown model, or an
+  unsupported reasoning effort.
 - `agent/request-error` records each level's failure, then advances the level by
   returning `{ kind: 'retry' }`. When every level is exhausted it throws one
   aggregated error listing each level's failure (`provider: code — message`).

@@ -5,13 +5,15 @@
 // the primary for every step so request prefixes (and KV cache) stay stable,
 // and only fails over when the current level is exhausted:
 //
-//   - `agent/request`  — decide which pool level this step uses (always level 0
-//                        for a new step).
-//   - `agent/request-error` — record the failure, then advance the level. When a
-//                        level still has a fallback, return `{ kind: 'retry' }`
-//                        so the loop re-issues the same step on the next level.
-//                        When every level is exhausted, throw one aggregated
-//                        error listing each level's failure.
+//   - `agent/request`  — pick the pool level for this step (an explicit pool
+//                        member starts there), and skip candidates that would
+//                        fail before streaming (missing route, unknown model,
+//                        unsupported reasoning effort).
+//   - `agent/request-error` — record a streaming failure, then advance the level.
+//                        When a level still has a fallback, return
+//                        `{ kind: 'retry' }` so the loop re-issues the same step
+//                        on the next level. When every level is exhausted, throw
+//                        one aggregated error listing each level's failure.
 //
 // `retryPolicy.mode: 'always'` is structurally incompatible with a terminating
 // fallback chain: it retries one provider forever and can never be stopped from
@@ -77,18 +79,42 @@ export function apply(ctx, config) {
       s = { stepKey, model: proposal.model, providers, cursor: explicitIdx >= 0 ? explicitIdx : 0, retries: 0, failures: [], warned: new Set() }
       state.set(payload.agent, s)
     }
+    // Skip candidates that would fail before streaming (the prepareCall stage):
+    // an unregistered route (NO_ADAPTER), an unknown model, or an unsupported
+    // reasoning effort. Record each skip so the final error shows the full chain.
+    while (s.cursor < s.providers.length) {
+      const candidate = s.providers[s.cursor]
+      try {
+        await ctx.llm.resolveCallConfig({ ...proposal, provider: candidate }, payload.signal)
+        break
+      } catch (error) {
+        const code = error?.code ?? 'UNKNOWN'
+        const message = error?.message ?? ''
+        ctx.logger.warn('llm-fallback: skipping provider "%s" (model "%s"): %s — %s', candidate, s.model, code, message)
+        s.failures.push({ provider: candidate, failure: { code, message } })
+        s.cursor += 1
+      }
+    }
+
+    if (s.cursor >= s.providers.length) {
+      const chain = s.failures.map((f) => `  - ${f.provider}: ${f.failure.code ?? 'UNKNOWN'} — ${f.failure.message ?? ''}`).join('\n')
+      throw new Error(`llm-fallback: no provider in pool can serve model "${s.model}":\n${chain}`)
+    }
+
     const provider = s.providers[s.cursor]
 
-    // Runtime guard: the last level must be able to terminate.
+    // A pool's last level must be able to terminate: reject `always` there.
     if (s.cursor === s.providers.length - 1) {
+      let policy
       try {
-        if (ctx.llm.providerRetryPolicy(provider)?.mode === 'always') {
-          throw new Error(
-            `llm-fallback: provider "${provider}" is the last fallback for model "${s.model}" with retryPolicy.mode=always; it can never terminate`,
-          )
-        }
+        policy = ctx.llm.providerRetryPolicy(provider)
       } catch (error) {
-        if (error?.code !== 'NO_ADAPTER') throw error // NO_ADAPTER is reported by prepareCall
+        if (error?.code !== 'NO_ADAPTER') throw error
+      }
+      if (policy?.mode === 'always') {
+        throw new Error(
+          `llm-fallback: provider "${provider}" is the last fallback for model "${s.model}" with retryPolicy.mode=always; it can never terminate`,
+        )
       }
     }
 
