@@ -1,0 +1,25 @@
+# llm-fallback profile layer: insert one row that mounts the fallback plugin.
+# The first provider of each pool is the primary; later ones are fallbacks.
+- insert:
+    - id: llm-fallback
+      name: 'llm-fallback'
+      config:
+        alwaysPolicy: reject     # reject = refuse to load on `always`; degrade = cap it and warn
+        alwaysMaxRetries: 2      # when degrade, max same-provider retries before failing over
+        pools:
+          - model: deepseek-v4-pro
+            providers:
+              - ark-agent
+              - ark-coding
+          - model: deepseek-v4-flash
+            providers:
+              - ark-agent
+              - ark-coding
+          - model: glm-5.3
+            providers:
+              - ark-agent
+              - ark-coding
+          - model: glm-5.2
+            providers:
+              - ark-agent
+              - ark-coding
