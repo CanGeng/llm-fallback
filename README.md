@@ -1,5 +1,7 @@
 # llm-fallback
 
+English | [中文](README.zh.md)
+
 Multi-level provider fallback for same-named models in the DeepSeek Harness.
 
 A pool maps one model id to an ordered provider list. The first provider is the
